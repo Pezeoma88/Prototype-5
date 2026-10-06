@@ -1,28 +1,51 @@
+import { useRef } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
+  StyleSheet,
   Text,
-  TouchableOpacity,
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import styles from '../theme/legacyStyles';
-import { RIDE_SORT_OPTIONS, getInitial } from '../lib/format';
+import Ionicons from '@react-native-vector-icons/ionicons';
+import Avatar from '../components/Avatar';
+import Badge from '../components/Badge';
+import Card from '../components/Card';
+import AppButton from '../components/AppButton';
+import EmptyState from '../components/EmptyState';
+import SectionHeader from '../components/SectionHeader';
+import SegmentedControl from '../components/SegmentedControl';
+import Notice from '../components/Notice';
+import RideCard from '../components/RideCard';
+import RiderCard from '../components/RiderCard';
+import { RIDE_SORT_OPTIONS } from '../lib/format';
+import { colors, gutter, radius, spacing, typography } from '../theme/theme';
 
-// Home tab: the shared CarpoolBoard (Available Rides + Looking for a Ride),
-// plus the Offer a Ride / Request a Ride forms and Ride Details. State and
-// Supabase logic stay in App.js. App passes the details view and the two
-// forms in as ready-made elements so this screen only arranges them.
-// (Moved from App.js in Phase 1A; restyled in Phase 1B.)
+// "Good morning" / "Good afternoon" / "Good evening" from the device clock.
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+// Home tab: the shared CarpoolBoard. Shows a greeting, what CarpoolBoard is
+// for, the role's main actions, then Available Rides (Driver offers, blue)
+// and Riders Looking for a Ride (Rider requests, orange).
+//
+// Ride Details and the Offer a Ride / Need a Ride forms open in place of the
+// board (App passes them in as ready-made elements). State and Supabase
+// logic stay in App.js.
 //
 // This screen applies its own top safe-area inset (instead of App doing it)
-// so the KeyboardAvoidingView below measures its position from the top of
-// the screen and lifts forms the right amount above the keyboard.
+// so the KeyboardAvoidingView measures its position from the top of the
+// screen and lifts forms the right amount above the keyboard.
 export default function HomeScreen({
   currentUser,
   drivers,
@@ -35,14 +58,14 @@ export default function HomeScreen({
   rideSortOrder,
   setRideSortOrder,
   handleViewRideDetails,
+  handleQuickRequest,
   handleLeaveWaitlist,
-  showActionsRow,
   isAddingDriver,
   isAddingRider,
   handleAddDriver,
   handleNeedRide,
   isCurrentUserWaiting,
-  handleSignOut,
+  handleOpenProfile,
   matchConfirmation,
   handleDismissMatchConfirmation,
   scrollViewRef,
@@ -50,305 +73,244 @@ export default function HomeScreen({
   rideForm,
   riderForm,
 }) {
-  return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Dark navy header: text + shape based branding, no emoji */}
-      <View style={styles.header}>
-        <View style={styles.brandRow}>
-          <View style={styles.logoMark}>
-            <Text style={styles.logoMarkText}>C</Text>
-          </View>
-          <View style={styles.brandTextGroup}>
-            <Text style={styles.brandTitle}>CarpoolBoard</Text>
-            <Text style={styles.brandTagline}>Share the ride. Split the drive.</Text>
-          </View>
-        </View>
+  // Y positions of the two board sections, so "Find a Ride" / "Find Riders"
+  // can scroll straight to them.
+  const ridesSectionY = useRef(0);
+  const ridersSectionY = useRef(0);
 
-        <View style={styles.accountRow}>
-          <Text style={styles.accountText} numberOfLines={1}>
-            Signed in as <Text style={styles.accountTextStrong}>{currentUser.name}</Text>
-          </Text>
-          <View
-            style={[
-              styles.roleBadge,
-              currentUser.role === 'driver' ? styles.roleBadgeDriver : styles.roleBadgeRider,
-            ]}
-          >
-            <Text style={styles.roleBadgeText}>
-              {currentUser.role === 'driver' ? 'Driver' : 'Rider'}
+  const isDriver = currentUser.role === 'driver';
+  const showRideForm = isDriver && isAddingDriver;
+  const showRiderForm = !isDriver && isAddingRider;
+
+  // Which view fills the screen. Used as the ScrollView key so switching
+  // views (board ↔ details ↔ form) always starts at the top.
+  let viewKey = 'board';
+  if (matchConfirmation) viewKey = 'match';
+  else if (detailsView) viewKey = 'details';
+  else if (showRideForm) viewKey = 'rideForm';
+  else if (showRiderForm) viewKey = 'riderForm';
+
+  function scrollToY(y) {
+    scrollViewRef.current?.scrollTo({ y: Math.max(0, y - spacing.md), animated: true });
+  }
+
+  const firstName = currentUser.name.trim().split(/\s+/)[0];
+
+  function renderBoard() {
+    return (
+      <>
+        {/* Greeting + avatar (tap → Profile tab) */}
+        <View style={styles.greetingRow}>
+          <View style={styles.greetingText}>
+            <Text style={styles.greeting}>{getGreeting()},</Text>
+            <Text style={styles.greetingName} numberOfLines={1}>
+              {firstName}
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={handleSignOut}
-            activeOpacity={0.7}
-            style={styles.accountActionButton}
+          <Pressable
+            onPress={handleOpenProfile}
+            accessibilityRole="button"
+            accessibilityLabel="Open your profile"
+            hitSlop={6}
           >
-            <Text style={styles.logOutText}>Log Out</Text>
-          </TouchableOpacity>
+            <Avatar name={currentUser.name} role={currentUser.role} size={46} ring />
+          </Pressable>
         </View>
 
-        <View style={styles.statRow}>
-          <View style={styles.statChip}>
-            <Text style={styles.statChipNumber}>{drivers.length}</Text>
-            <Text style={styles.statChipLabel}>Drivers</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statChip}>
-            <Text style={styles.statChipNumber}>{riders.length}</Text>
-            <Text style={styles.statChipLabel}>Riders Waiting</Text>
-          </View>
+        {/* What CarpoolBoard is for */}
+        <View style={styles.hero}>
+          <Badge
+            label={isDriver ? 'Driving' : 'Riding'}
+            tone={isDriver ? 'driver' : 'rider'}
+            style={styles.heroBadge}
+          />
+          <Text style={styles.heroTitle}>Where are you headed?</Text>
+          <Text style={styles.heroText}>
+            {isDriver
+              ? 'Post where you’re going, when you’re leaving, and how many seats you have. Riders can request a seat.'
+              : 'Browse rides drivers are offering, or let drivers know you’re looking for one.'}
+          </Text>
         </View>
-      </View>
 
+        {/* Main actions for this role */}
+        <View style={styles.actionsRow}>
+          {isDriver ? (
+            <>
+              <ActionTile
+                icon="add-circle"
+                title="Offer a Ride"
+                subtitle="Share your open seats"
+                filled
+                onPress={handleAddDriver}
+              />
+              <ActionTile
+                icon="people"
+                title="Find Riders"
+                subtitle={`${riders.length} looking now`}
+                tint={colors.rider}
+                onPress={() => scrollToY(ridersSectionY.current)}
+              />
+            </>
+          ) : (
+            <>
+              <ActionTile
+                icon="search"
+                title="Find a Ride"
+                subtitle={`${drivers.length} ride${drivers.length === 1 ? '' : 's'} posted`}
+                filled
+                onPress={() => scrollToY(ridesSectionY.current)}
+              />
+              <ActionTile
+                icon="hand-left"
+                title="Need a Ride?"
+                subtitle={isCurrentUserWaiting ? 'You’re on the list' : 'Tell drivers'}
+                tint={colors.rider}
+                onPress={handleNeedRide}
+              />
+            </>
+          )}
+        </View>
+
+        {/* Available Rides: Driver offers */}
+        <View onLayout={(event) => (ridesSectionY.current = event.nativeEvent.layout.y)}>
+          <SectionHeader
+            title="Available Rides"
+            role="driver"
+            right={<Badge label={String(drivers.length)} tone="driver" />}
+          />
+
+          {drivers.length > 1 && (
+            <SegmentedControl
+              options={RIDE_SORT_OPTIONS}
+              value={rideSortOrder}
+              onChange={setRideSortOrder}
+              style={styles.sort}
+            />
+          )}
+
+          {/* A failed load keeps any rides already shown; this just explains
+              why they may be out of date. */}
+          {boardError !== '' && <Notice message={boardError} tone="danger" />}
+
+          {drivers.length === 0 && isBoardLoading ? (
+            <Card style={styles.loadingCard}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={styles.loadingText}>Loading rides…</Text>
+            </Card>
+          ) : drivers.length === 0 && boardError !== '' ? (
+            <EmptyState
+              icon="cloud-offline-outline"
+              title="Rides couldn’t be loaded"
+              message="Check your connection, then try again."
+              actionLabel="Refresh"
+              onAction={handleRefresh}
+              style={styles.sectionGap}
+            />
+          ) : drivers.length === 0 ? (
+            <EmptyState
+              icon="car-outline"
+              title="No rides available right now"
+              message={
+                isDriver
+                  ? 'Be the first to offer one, or pull down to refresh.'
+                  : 'Pull down to refresh, or tap Need a Ride? so drivers know you’re looking.'
+              }
+              actionLabel="Refresh"
+              onAction={handleRefresh}
+              style={styles.sectionGap}
+            />
+          ) : (
+            <View style={styles.sectionGap}>
+              {sortedDrivers.map((driver) => (
+                <RideCard
+                  key={driver.id}
+                  ride={driver}
+                  currentUser={currentUser}
+                  onView={() => handleViewRideDetails(driver.id)}
+                  onRequest={() => handleQuickRequest(driver.id)}
+                />
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* Riders Looking for a Ride: Rider requests */}
+        <View onLayout={(event) => (ridersSectionY.current = event.nativeEvent.layout.y)}>
+          <SectionHeader
+            title="Riders Looking for a Ride"
+            role="rider"
+            right={<Badge label={String(riders.length)} tone="rider" />}
+          />
+
+          {riders.length === 0 ? (
+            <EmptyState
+              icon="walk-outline"
+              title="No riders are looking right now"
+              message={
+                isDriver
+                  ? 'When riders need transportation, they’ll show up here. Pull down to refresh.'
+                  : 'Tap Need a Ride? to let drivers know you’re looking.'
+              }
+            />
+          ) : (
+            riders.map((rider) => (
+              <RiderCard
+                key={rider.id}
+                rider={rider}
+                isSelf={currentUser.role === 'rider' && rider.id === currentUser.id}
+                onRemove={() => handleLeaveWaitlist(rider.id)}
+              />
+            ))
+          )}
+        </View>
+      </>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
       <KeyboardAvoidingView
-        style={styles.mainFlexWrap}
+        style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
+            key={viewKey}
             ref={scrollViewRef}
-            style={styles.scrollArea}
-            contentContainerStyle={styles.container}
+            style={styles.flex}
+            contentContainerStyle={styles.content}
             keyboardShouldPersistTaps="handled"
             refreshControl={
               <RefreshControl
                 refreshing={isRefreshing}
                 onRefresh={handleRefresh}
-                tintColor="#3B6EF5"
-                colors={['#3B6EF5']}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+                progressBackgroundColor={colors.surface}
               />
             }
           >
             {matchConfirmation ? (
               /* Match Confirmed screen: shown after a rider is matched to a driver */
-              <View style={styles.confirmationWrap}>
-                <View style={styles.confirmationCard}>
-                  <View style={styles.confirmationIconCircle}>
-                    <Text style={styles.confirmationIcon}>✓</Text>
-                  </View>
-
-                  <Text style={styles.confirmationTitle}>Ride Matched!</Text>
-                  <Text style={styles.confirmationSubtitle}>
-                    {matchConfirmation.riderName} has been matched with {matchConfirmation.driverName}
-                    &apos;s ride.
-                  </Text>
-
-                  <View style={styles.confirmationDetailsBox}>
-                    <View style={styles.confirmationDetailRow}>
-                      <Text style={styles.confirmationDetailLabel}>Rider</Text>
-                      <Text style={styles.confirmationDetailValue}>
-                        {matchConfirmation.riderName}
-                      </Text>
-                    </View>
-                    <View style={styles.confirmationDetailDivider} />
-                    <View style={styles.confirmationDetailRow}>
-                      <Text style={styles.confirmationDetailLabel}>Driver</Text>
-                      <Text style={styles.confirmationDetailValue}>
-                        {matchConfirmation.driverName}
-                      </Text>
-                    </View>
-                    <View style={styles.confirmationDetailDivider} />
-                    <View style={styles.confirmationDetailRow}>
-                      <Text style={styles.confirmationDetailLabel}>Destination</Text>
-                      <Text style={styles.confirmationDetailValue}>
-                        {matchConfirmation.destination}
-                      </Text>
-                    </View>
-                    <View style={styles.confirmationDetailDivider} />
-                    <View style={styles.confirmationDetailRow}>
-                      <Text style={styles.confirmationDetailLabel}>Departs</Text>
-                      <Text style={styles.confirmationDetailValue}>
-                        {matchConfirmation.departureTime}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.saveDriverButton, styles.confirmationDoneButton]}
-                    onPress={handleDismissMatchConfirmation}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.buttonText}>Back to Rides</Text>
-                  </TouchableOpacity>
+              <Card style={styles.matchCard}>
+                <View style={styles.matchIcon}>
+                  <Ionicons name="checkmark" size={30} color={colors.textOnAccent} />
                 </View>
-              </View>
+                <Text style={styles.matchTitle}>Ride Matched!</Text>
+                <Text style={styles.matchText}>
+                  {matchConfirmation.riderName} has been matched with {matchConfirmation.driverName}
+                  ’s ride to {matchConfirmation.destination}, departing {matchConfirmation.departureTime}.
+                </Text>
+                <AppButton title="Back to Rides" onPress={handleDismissMatchConfirmation} style={styles.matchButton} />
+              </Card>
             ) : detailsView ? (
-              /* Ride Details screen: shown after selecting a ride from Available Rides */
               detailsView
+            ) : showRideForm ? (
+              rideForm
+            ) : showRiderForm ? (
+              riderForm
             ) : (
-              <>
-                {/* Available Rides section (drivers) */}
-                <View style={styles.sectionHeaderRow}>
-                  <View style={[styles.sectionAccent, styles.sectionAccentDriver]} />
-                  <Text style={styles.sectionTitle}>Available Rides</Text>
-                </View>
-
-                {/* Sort control: only useful once there's more than one ride. */}
-                {drivers.length > 1 && (
-                  <View style={styles.sortRow}>
-                    <Text style={styles.sortLabel}>Sort by</Text>
-                    {RIDE_SORT_OPTIONS.map((option) => {
-                      const isActive = rideSortOrder === option.key;
-                      return (
-                        <TouchableOpacity
-                          key={option.key}
-                          style={[styles.sortOption, isActive && styles.sortOptionActive]}
-                          onPress={() => setRideSortOrder(option.key)}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={[styles.sortOptionText, isActive && styles.sortOptionTextActive]}>
-                            {option.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-
-                {/* A failed load keeps any rides already shown; this just explains why
-                    they may be out of date. */}
-                {boardError !== '' && (
-                  <View style={styles.noticeBox}>
-                    <Text style={styles.noticeText}>{boardError}</Text>
-                  </View>
-                )}
-
-                {drivers.length === 0 && isBoardLoading ? (
-                  <View style={styles.emptyCard}>
-                    <ActivityIndicator color="#3B6EF5" />
-                    <Text style={[styles.emptyMessage, styles.loadingMessage]}>Loading rides…</Text>
-                  </View>
-                ) : drivers.length === 0 && boardError !== '' ? (
-                  <View style={styles.emptyCard}>
-                    <Text style={styles.emptyMessage}>Rides couldn't be loaded.</Text>
-                  </View>
-                ) : drivers.length === 0 ? (
-                  <View style={styles.emptyCard}>
-                    <Text style={styles.emptyMessage}>No rides posted yet.</Text>
-                  </View>
-                ) : (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.rideCarousel}
-                  >
-                    {sortedDrivers.map((driver) => (
-                      <TouchableOpacity
-                        key={driver.id}
-                        style={styles.rideCard}
-                        onPress={() => handleViewRideDetails(driver.id)}
-                        activeOpacity={0.85}
-                      >
-                        <View style={styles.rideCardTop}>
-                          <View style={styles.avatarRing}>
-                            <View style={styles.avatar}>
-                              <Text style={styles.avatarText}>{getInitial(driver.name)}</Text>
-                            </View>
-                          </View>
-                          <View style={[styles.seatBadge, driver.seats === 0 && styles.seatBadgeFull]}>
-                            <Text style={[styles.seatBadgeText, driver.seats === 0 && styles.seatBadgeTextFull]}>
-                              {driver.seats === 0 ? 'Full' : `${driver.seats} seat${driver.seats === 1 ? '' : 's'}`}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {driver.driverAccountId === currentUser.id && (
-                          <Text style={styles.yourRideTag}>Your Ride</Text>
-                        )}
-                        <Text style={styles.rideCardName}>{driver.name}</Text>
-
-                        <View style={styles.rideCardRouteRow}>
-                          <Text style={styles.rideCardRouteIcon}>→</Text>
-                          <Text style={styles.rideCardDestination} numberOfLines={1}>
-                            {driver.destination}
-                          </Text>
-                        </View>
-
-                        <View style={styles.rideCardTimeBadge}>
-                          <Text style={styles.rideCardTimeText}>Departs {driver.departureTime}</Text>
-                        </View>
-
-                        <Text style={styles.rideCardCounts}>
-                          {driver.pendingRequests.length} pending · {driver.matchedRiders.length} confirmed
-                        </Text>
-
-                        <View style={styles.rideCardButton}>
-                          <Text style={styles.rideCardButtonText}>View Details</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                )}
-
-                {/* Looking for a Ride section (riders) */}
-                <View style={styles.sectionHeaderRow}>
-                  <View style={[styles.sectionAccent, styles.sectionAccentRider]} />
-                  <Text style={styles.sectionTitle}>Looking for a Ride</Text>
-                </View>
-
-                {riders.length === 0 ? (
-                  <View style={styles.emptyCard}>
-                    <Text style={styles.emptyMessage}>No riders waiting.</Text>
-                  </View>
-                ) : (
-                  <View style={styles.riderChipRow}>
-                    {riders.map((rider) => {
-                      const isSelf = currentUser.role === 'rider' && rider.id === currentUser.id;
-                      return (
-                        <View key={rider.id} style={styles.riderChip}>
-                          <View style={[styles.avatar, styles.riderAvatar, styles.riderChipAvatar]}>
-                            <Text style={styles.avatarText}>{getInitial(rider.name)}</Text>
-                          </View>
-                          <Text style={styles.riderChipName}>{rider.name}</Text>
-                          {isSelf && (
-                            <TouchableOpacity
-                              style={styles.riderChipLeaveButton}
-                              onPress={() => handleLeaveWaitlist(rider.id)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.riderChipLeaveText}>Remove</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
-
-                {/* Primary actions: side-by-side quick-action cards */}
-                {showActionsRow && (
-                  <View style={styles.actionsRow}>
-                    {currentUser.role === 'driver' && !isAddingDriver && (
-                      <TouchableOpacity
-                        style={[styles.actionCard, styles.actionCardDriver]}
-                        onPress={handleAddDriver}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.actionCardLabel}>Offer a Ride</Text>
-                        <Text style={styles.actionCardHint}>Have extra seats?</Text>
-                      </TouchableOpacity>
-                    )}
-                    {currentUser.role === 'rider' && !isAddingRider && (
-                      <TouchableOpacity
-                        style={[styles.actionCard, styles.actionCardRider]}
-                        onPress={handleNeedRide}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.actionCardLabel}>Request a Ride</Text>
-                        <Text style={styles.actionCardHint}>
-                          {isCurrentUserWaiting ? "You're on the list" : 'Need a lift?'}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-
-                {/* Offer a Ride / Edit Ride form */}
-                {currentUser.role === 'driver' && isAddingDriver && rideForm}
-
-                {/* Request a Ride form */}
-                {currentUser.role === 'rider' && isAddingRider && riderForm}
-              </>
+              renderBoard()
             )}
           </ScrollView>
         </TouchableWithoutFeedback>
@@ -356,3 +318,176 @@ export default function HomeScreen({
     </SafeAreaView>
   );
 }
+
+// Large tappable action on the Home screen. `filled` = the role's primary
+// action (solid blue); otherwise a dark tile with a colored icon.
+function ActionTile({ icon, title, subtitle, tint = colors.primary, filled = false, onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => [
+        styles.tile,
+        filled ? styles.tileFilled : styles.tileOutline,
+        pressed && styles.tilePressed,
+      ]}
+    >
+      <View style={[styles.tileIcon, { backgroundColor: filled ? colors.onAccentSoft : `${tint}29` }]}>
+        <Ionicons name={icon} size={20} color={filled ? colors.textOnAccent : tint} />
+      </View>
+      <Text style={styles.tileTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <Text style={[styles.tileSubtitle, filled && styles.tileSubtitleFilled]} numberOfLines={1}>
+        {subtitle}
+      </Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  flex: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: gutter,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xxxl,
+  },
+
+  // Greeting
+  greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  greetingText: {
+    flex: 1,
+    marginRight: spacing.md,
+  },
+  greeting: {
+    ...typography.body,
+    color: colors.textMuted,
+  },
+  greetingName: {
+    ...typography.heading,
+    color: colors.text,
+    marginTop: 2,
+  },
+
+  // Hero
+  hero: {
+    marginBottom: spacing.xl,
+  },
+  heroBadge: {
+    marginBottom: spacing.sm,
+  },
+  heroTitle: {
+    ...typography.display,
+    color: colors.text,
+    letterSpacing: -0.3,
+  },
+  heroText: {
+    ...typography.body,
+    color: colors.textMuted,
+    lineHeight: 21,
+    marginTop: spacing.sm,
+  },
+
+  // Action tiles
+  actionsRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.xxl + spacing.xs,
+  },
+  tile: {
+    flex: 1,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+  },
+  tileFilled: {
+    backgroundColor: colors.primary,
+  },
+  tileOutline: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tilePressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
+  },
+  tileIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  tileTitle: {
+    ...typography.bodyStrong,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  tileSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  tileSubtitleFilled: {
+    color: colors.textOnAccentMuted,
+  },
+
+  // Board sections
+  sort: {
+    marginBottom: spacing.md,
+  },
+  sectionGap: {
+    marginBottom: spacing.xxl,
+  },
+  loadingCard: {
+    alignItems: 'center',
+    paddingVertical: spacing.xxl,
+    marginBottom: spacing.xxl,
+  },
+  loadingText: {
+    ...typography.label,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+  },
+
+  // Match confirmation
+  matchCard: {
+    alignItems: 'center',
+    paddingVertical: spacing.xxl,
+  },
+  matchIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  matchTitle: {
+    ...typography.heading,
+    color: colors.text,
+  },
+  matchText: {
+    ...typography.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 21,
+    marginTop: spacing.sm,
+  },
+  matchButton: {
+    alignSelf: 'stretch',
+    marginTop: spacing.xl,
+  },
+});

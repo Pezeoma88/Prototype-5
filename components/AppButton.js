@@ -11,8 +11,8 @@ import { colors, radius, spacing } from '../theme/theme';
 const VARIANTS = {
   primary: { bg: colors.primary, pressedBg: colors.primaryPressed, text: colors.textOnAccent },
   secondary: { bg: 'transparent', pressedBg: colors.surfaceRaised, text: colors.text, border: colors.borderStrong },
-  destructive: { bg: colors.dangerSoft, pressedBg: 'rgba(239, 68, 68, 0.26)', text: colors.danger },
-  rider: { bg: colors.rider, pressedBg: '#E8742A', text: colors.textOnAccent },
+  destructive: { bg: colors.dangerSoft, pressedBg: colors.dangerPressed, text: colors.danger },
+  rider: { bg: colors.rider, pressedBg: colors.riderPressed, text: colors.textOnAccent },
 };
 
 export default function AppButton({

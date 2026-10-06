@@ -1,11 +1,22 @@
-import { Keyboard, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import styles from '../theme/legacyStyles';
-import { getInitial } from '../lib/format';
+import { Keyboard, StyleSheet, Text, View } from 'react-native';
+import Avatar from '../components/Avatar';
+import Badge from '../components/Badge';
+import Card from '../components/Card';
+import AppButton from '../components/AppButton';
+import BackHeader from '../components/BackHeader';
+import FormSection from '../components/FormSection';
+import InfoRow from '../components/InfoRow';
+import Notice from '../components/Notice';
+import RouteLine from '../components/RouteLine';
+import SectionHeader from '../components/SectionHeader';
+import TextField from '../components/TextField';
+import { colors, radius, spacing, typography } from '../theme/theme';
 
 // Ride Details: shown after selecting a ride from Available Rides. Shows
 // pending requests (with Accept/Deny for the ride's driver), confirmed
 // passengers, and the rider's Request / Leave actions. All logic lives in
-// App.js and arrives as props. (Moved from App.js in Phase 1A.)
+// App.js and arrives as props; the rules for who sees which action are the
+// same as Prototype 4.
 export default function RideDetailsScreen({
   detailsDriver,
   currentUser,
@@ -25,264 +36,334 @@ export default function RideDetailsScreen({
   handleStartEditRide,
   handleCancelRide,
 }) {
-  return (
-    <View style={styles.detailsWrap}>
-      <View style={styles.detailsCard}>
-        <TouchableOpacity
-          style={styles.detailsBackRow}
-          onPress={handleBackToAvailableRides}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.detailsBackArrow}>‹</Text>
-          <Text style={styles.detailsBackText}>Available Rides</Text>
-        </TouchableOpacity>
+  const isFull = detailsDriver.seats === 0;
 
-        <View style={styles.detailsHeaderRow}>
-          <View style={styles.avatarRing}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{getInitial(detailsDriver.name)}</Text>
+  function renderRiderAction() {
+    // Requesting is hidden entirely on your own ride, so nobody can request
+    // a seat from themselves.
+    if (currentUser.role !== 'rider' || isOwnDetailsRide) {
+      return null;
+    }
+
+    if (reservingDriverId === detailsDriver.id) {
+      // Rider Matching: the signed-in rider confirms their own request.
+      return (
+        <FormSection title={`Request ${detailsDriver.name}’s ride`} icon="hand-right" style={styles.block}>
+          <Text style={styles.panelText}>
+            Send this request as {currentUser.name}. The driver will accept or deny it.
+          </Text>
+          <TextField
+            label="Message to the driver (optional)"
+            icon="chatbubble-ellipses-outline"
+            placeholder='e.g. "Going to campus"'
+            value={requestReasonInput}
+            onChangeText={setRequestReasonInput}
+            multiline
+            numberOfLines={2}
+            maxLength={140}
+            returnKeyType="done"
+            blurOnSubmit
+            onSubmitEditing={Keyboard.dismiss}
+            hint={`${requestReasonInput.length}/140`}
+          />
+          <AppButton
+            title="Confirm Request"
+            icon="paper-plane"
+            onPress={() => handleRequestRide(detailsDriver.id, currentUser.id, requestReasonInput)}
+            style={styles.buttonGap}
+          />
+          <AppButton title="Cancel" variant="secondary" onPress={handleCancelReserve} />
+        </FormSection>
+      );
+    }
+
+    const alreadyConfirmed = detailsDriver.matchedRiders.some((r) => r.id === currentUser.id);
+    const alreadyPending = detailsDriver.pendingRequests.some((req) => req.riderId === currentUser.id);
+
+    let reserveLabel = 'Request This Ride';
+    if (isFull) {
+      reserveLabel = 'Full';
+    } else if (alreadyConfirmed) {
+      reserveLabel = 'Already Confirmed';
+    } else if (alreadyPending) {
+      reserveLabel = 'Request Pending';
+    }
+    const reserveDisabled = isFull || alreadyConfirmed || alreadyPending;
+
+    return (
+      <AppButton
+        title={reserveLabel}
+        icon={reserveDisabled ? undefined : 'hand-right-outline'}
+        onPress={() => handleBeginRequest(detailsDriver.id)}
+        disabled={reserveDisabled}
+        style={styles.block}
+      />
+    );
+  }
+
+  return (
+    <View>
+      <BackHeader backLabel="Available Rides" onBack={handleBackToAvailableRides} title="Ride Details" />
+
+      {/* Driver + trip summary */}
+      <Card style={styles.block}>
+        <View style={styles.driverRow}>
+          <Avatar name={detailsDriver.name} role="driver" size={56} ring />
+          <View style={styles.driverText}>
+            <Text style={styles.driverName} numberOfLines={2}>
+              {detailsDriver.name}
+            </Text>
+            <View style={styles.badgeRow}>
+              <Badge label="Driver" tone="driver" />
+              {isOwnDetailsRide && <Badge label="Your ride" tone="primary" />}
             </View>
-          </View>
-          <View style={styles.detailsHeaderText}>
-            <Text style={styles.detailsDriverName}>{detailsDriver.name}</Text>
-            <Text style={styles.detailsHeaderHint}>Ride Details</Text>
           </View>
         </View>
 
-        <View style={styles.confirmationDetailsBox}>
-          <View style={styles.confirmationDetailRow}>
-            <Text style={styles.confirmationDetailLabel}>Destination</Text>
-            <Text style={styles.confirmationDetailValue}>{detailsDriver.destination}</Text>
-          </View>
-          <View style={styles.confirmationDetailDivider} />
-          <View style={styles.confirmationDetailRow}>
-            <Text style={styles.confirmationDetailLabel}>Departs</Text>
-            <Text style={styles.confirmationDetailValue}>{detailsDriver.departureTime}</Text>
-          </View>
-          <View style={styles.confirmationDetailDivider} />
-          <View style={styles.confirmationDetailRow}>
-            <Text style={styles.confirmationDetailLabel}>Available Seats</Text>
-            {detailsDriver.seats === 0 ? (
-              <View style={styles.fullPill}>
-                <Text style={styles.fullPillText}>Full</Text>
+        <View style={styles.route}>
+          <RouteLine destination={detailsDriver.destination} tint={colors.driver} />
+        </View>
+
+        <InfoRow icon="time-outline" label="Departs" value={detailsDriver.departureTime} divider />
+        <InfoRow
+          icon="people-outline"
+          label="Available seats"
+          divider
+          right={
+            isFull ? (
+              <View style={styles.rightAlign}>
+                <Badge label="Full" tone="danger" />
               </View>
             ) : (
-              <Text style={styles.confirmationDetailValue}>{detailsDriver.seats}</Text>
-            )}
-          </View>
-        </View>
+              <Text style={styles.seatValue}>
+                {detailsDriver.seats} <Text style={styles.seatTotal}>of {detailsDriver.totalSeats}</Text>
+              </Text>
+            )
+          }
+        />
+      </Card>
 
-        {requestNotice !== '' && (
-          <View style={styles.noticeBox}>
-            <Text style={styles.noticeText}>{requestNotice}</Text>
-          </View>
-        )}
+      {requestNotice !== '' && <Notice message={requestNotice} />}
 
-        <View style={styles.sectionHeaderRow}>
-          <View style={[styles.sectionAccent, styles.sectionAccentRider]} />
-          <Text style={styles.sectionTitle}>
-            Pending requests ({detailsDriver.pendingRequests.length})
-          </Text>
-        </View>
+      {/* The rider's own action comes first so Request is visible right away. */}
+      {renderRiderAction()}
 
-        {detailsDriver.pendingRequests.length === 0 ? (
-          <Text style={styles.detailsMatchedEmpty}>No pending requests.</Text>
-        ) : (
-          <View style={styles.pendingList}>
-            {detailsDriver.pendingRequests.map((request) => (
-              <View key={request.id} style={styles.pendingRow}>
-                <View style={[styles.avatar, styles.riderAvatar, styles.riderPickAvatar]}>
-                  <Text style={styles.avatarText}>{getInitial(request.name)}</Text>
+      {/* Pending requests */}
+      <SectionHeader
+        title="Pending requests"
+        role="rider"
+        right={<Badge label={String(detailsDriver.pendingRequests.length)} tone="pending" />}
+      />
+      {detailsDriver.pendingRequests.length === 0 ? (
+        <Text style={styles.emptyText}>No pending requests.</Text>
+      ) : (
+        <View style={styles.block}>
+          {detailsDriver.pendingRequests.map((request) => (
+            <Card key={request.id} style={styles.personCard}>
+              <View style={styles.personRow}>
+                <Avatar name={request.name} role="rider" size={38} />
+                <View style={styles.personText}>
+                  <Text style={styles.personName} numberOfLines={1}>
+                    {request.name}
+                  </Text>
+                  <Badge label="Pending" tone="pending" style={styles.personBadge} />
                 </View>
-                <View style={styles.pendingInfo}>
-                  <Text style={styles.riderPickName}>{request.name}</Text>
-                  <Text style={styles.pendingStatus}>Pending</Text>
-                  {request.reason ? (
-                    <Text style={styles.pendingReasonText} numberOfLines={2}>
-                      “{request.reason}”
-                    </Text>
-                  ) : null}
-                </View>
-                {isOwnerDriver && (
-                  <>
-                    {/* Never offer "Accept" on a request from the
-                        ride's own driver: they can't be their own
-                        passenger. */}
-                    {request.riderId !== detailsDriver.driverAccountId && (
-                    <TouchableOpacity
-                      style={[
-                        styles.acceptButton,
-                        detailsDriver.seats === 0 && styles.rideCardButtonDisabled,
-                      ]}
-                      onPress={() => handleAcceptRequest(detailsDriver.id, request.id)}
-                      disabled={detailsDriver.seats === 0}
-                      activeOpacity={0.85}
-                    >
-                      <Text
-                        style={[
-                          styles.acceptButtonText,
-                          detailsDriver.seats === 0 && styles.rideCardButtonTextDisabled,
-                        ]}
-                      >
-                        {detailsDriver.seats === 0 ? 'Full' : 'Accept'}
-                      </Text>
-                    </TouchableOpacity>
-                    )}
-                    <TouchableOpacity
-                      style={styles.denyButton}
-                      onPress={() => handleDenyRequest(detailsDriver.id, request.id)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.denyButtonText}>Deny</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
               </View>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.sectionHeaderRow}>
-          <View style={[styles.sectionAccent, styles.sectionAccentDriver]} />
-          <Text style={styles.sectionTitle}>
-            Confirmed passengers ({detailsDriver.matchedRiders.length})
-          </Text>
+              {request.reason ? (
+                <View style={styles.reasonBox}>
+                  <Text style={styles.reasonText} numberOfLines={3}>
+                    “{request.reason}”
+                  </Text>
+                </View>
+              ) : null}
+              {isOwnerDriver && (
+                <View style={styles.personActions}>
+                  {/* Never offer "Accept" on a request from the ride's own
+                      driver: they can't be their own passenger. */}
+                  {request.riderId !== detailsDriver.driverAccountId && (
+                    <AppButton
+                      title={isFull ? 'Full' : 'Accept'}
+                      icon={isFull ? undefined : 'checkmark'}
+                      size="sm"
+                      disabled={isFull}
+                      onPress={() => handleAcceptRequest(detailsDriver.id, request.id)}
+                      style={styles.flex}
+                    />
+                  )}
+                  <AppButton
+                    title="Deny"
+                    icon="close"
+                    variant="destructive"
+                    size="sm"
+                    onPress={() => handleDenyRequest(detailsDriver.id, request.id)}
+                    style={styles.flex}
+                  />
+                </View>
+              )}
+            </Card>
+          ))}
         </View>
+      )}
 
-        {detailsDriver.matchedRiders.length === 0 ? (
-          <Text style={styles.detailsMatchedEmpty}>No confirmed passengers yet.</Text>
-        ) : (
-          <View style={styles.riderChipRow}>
-            {detailsDriver.matchedRiders.map((rider) => {
-              const isSelf = currentUser.role === 'rider' && rider.id === currentUser.id;
-              return (
-                <View key={rider.id} style={styles.riderChip}>
-                  <View style={[styles.avatar, styles.riderChipAvatar]}>
-                    <Text style={styles.avatarText}>{getInitial(rider.name)}</Text>
+      {/* Confirmed passengers */}
+      <SectionHeader
+        title="Confirmed passengers"
+        role="driver"
+        right={<Badge label={String(detailsDriver.matchedRiders.length)} tone="success" />}
+      />
+      {detailsDriver.matchedRiders.length === 0 ? (
+        <Text style={styles.emptyText}>No confirmed passengers yet.</Text>
+      ) : (
+        <View style={styles.block}>
+          {detailsDriver.matchedRiders.map((rider) => {
+            const isSelf = currentUser.role === 'rider' && rider.id === currentUser.id;
+            return (
+              <Card key={rider.id} style={styles.personCard}>
+                <View style={styles.personRow}>
+                  <Avatar name={rider.name} role="rider" size={38} />
+                  <View style={styles.personText}>
+                    <Text style={styles.personName} numberOfLines={1}>
+                      {rider.name}
+                      {isSelf ? <Text style={styles.you}>  (You)</Text> : null}
+                    </Text>
+                    <Badge label="Confirmed" tone="success" style={styles.personBadge} />
                   </View>
-                  <Text style={styles.riderChipName}>{rider.name}</Text>
                   {isSelf && (
-                    <TouchableOpacity
-                      style={styles.riderChipLeaveButton}
+                    <AppButton
+                      title="Leave"
+                      variant="destructive"
+                      size="sm"
                       onPress={() => handleCancelConfirmedSeat(detailsDriver.id, rider.id)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.riderChipLeaveText}>Leave</Text>
-                    </TouchableOpacity>
+                    />
                   )}
                 </View>
-              );
-            })}
-          </View>
-        )}
+              </Card>
+            );
+          })}
+        </View>
+      )}
 
-        {/* Requesting is hidden entirely on your own ride, so nobody can
-            request a seat from themselves. */}
-        {currentUser.role === 'rider' &&
-          !isOwnDetailsRide &&
-          (reservingDriverId === detailsDriver.id ? (
-            /* Rider Matching: the signed-in rider confirms their own request. */
-            <View style={styles.reservationPanel}>
-              <Text style={styles.reservationTitle}>
-                Request {detailsDriver.name}&apos;s ride
-              </Text>
-              <Text style={styles.reservationSubtitle}>
-                Send this request as {currentUser.name}. The driver will accept or deny it.
-              </Text>
-
-              <TextInput
-                style={[styles.input, styles.reasonInput]}
-                placeholder='Optional: why do you need this ride? (e.g. "Going to campus")'
-                placeholderTextColor="#9AA3B2"
-                value={requestReasonInput}
-                onChangeText={setRequestReasonInput}
-                multiline
-                numberOfLines={2}
-                maxLength={140}
-                returnKeyType="done"
-                blurOnSubmit
-                onSubmitEditing={Keyboard.dismiss}
-              />
-
-              <TouchableOpacity
-                style={styles.saveRiderButton}
-                onPress={() => handleRequestRide(detailsDriver.id, currentUser.id, requestReasonInput)}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.buttonText}>Confirm Request</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleCancelReserve}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            (() => {
-              const alreadyConfirmed = detailsDriver.matchedRiders.some(
-                (r) => r.id === currentUser.id
-              );
-              const alreadyPending = detailsDriver.pendingRequests.some(
-                (req) => req.riderId === currentUser.id
-              );
-
-              let reserveLabel = 'Request This Ride';
-              if (detailsDriver.seats === 0) {
-                reserveLabel = 'Full';
-              } else if (alreadyConfirmed) {
-                reserveLabel = 'Already Confirmed';
-              } else if (alreadyPending) {
-                reserveLabel = 'Request Pending';
-              }
-              const reserveDisabled =
-                detailsDriver.seats === 0 || alreadyConfirmed || alreadyPending;
-
-              return (
-                <TouchableOpacity
-                  style={[
-                    styles.saveDriverButton,
-                    reserveDisabled && styles.rideCardButtonDisabled,
-                  ]}
-                  onPress={() => handleBeginRequest(detailsDriver.id)}
-                  disabled={reserveDisabled}
-                  activeOpacity={0.85}
-                >
-                  <Text
-                    style={[
-                      styles.buttonText,
-                      reserveDisabled && styles.rideCardButtonTextDisabled,
-                    ]}
-                  >
-                    {reserveLabel}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })()
-          ))}
-
-        {isOwnerDriver && (
-          <TouchableOpacity
-            style={styles.editRideButton}
+      {isOwnerDriver && (
+        <View style={styles.ownerActions}>
+          <AppButton
+            title="Edit Ride"
+            icon="create-outline"
+            variant="secondary"
             onPress={() => handleStartEditRide(detailsDriver.id)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.editRideButtonText}>Edit Ride</Text>
-          </TouchableOpacity>
-        )}
-
-        {isOwnerDriver && (
-          <TouchableOpacity
-            style={styles.cancelRideButton}
+            style={styles.buttonGap}
+          />
+          <AppButton
+            title="Cancel Ride"
+            icon="trash-outline"
+            variant="destructive"
             onPress={() => handleCancelRide(detailsDriver.id)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.cancelRideButtonText}>Cancel Ride</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+          />
+        </View>
+      )}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  block: {
+    marginBottom: spacing.xl,
+  },
+  flex: {
+    flex: 1,
+  },
+  driverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  driverText: {
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+  driverName: {
+    ...typography.heading,
+    fontSize: 20,
+    color: colors.text,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: 6,
+  },
+  route: {
+    marginTop: spacing.xl,
+    marginBottom: spacing.md,
+  },
+  rightAlign: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  seatValue: {
+    ...typography.bodyStrong,
+    color: colors.text,
+    flex: 1,
+    textAlign: 'right',
+  },
+  seatTotal: {
+    color: colors.textMuted,
+    fontWeight: '500',
+  },
+  emptyText: {
+    ...typography.label,
+    color: colors.textFaint,
+    marginBottom: spacing.xl,
+  },
+  personCard: {
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  personRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  personText: {
+    flex: 1,
+    marginLeft: spacing.md,
+    marginRight: spacing.sm,
+  },
+  personName: {
+    ...typography.bodyStrong,
+    color: colors.text,
+  },
+  you: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  personBadge: {
+    marginTop: 4,
+  },
+  reasonBox: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.md,
+  },
+  reasonText: {
+    ...typography.label,
+    fontStyle: 'italic',
+    color: colors.textMuted,
+    lineHeight: 19,
+  },
+  personActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  panelText: {
+    ...typography.label,
+    color: colors.textMuted,
+    lineHeight: 19,
+    marginBottom: spacing.lg,
+  },
+  buttonGap: {
+    marginBottom: spacing.sm,
+  },
+  ownerActions: {
+    marginTop: spacing.xs,
+  },
+});

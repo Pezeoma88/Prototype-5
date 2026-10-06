@@ -379,8 +379,9 @@ export default function App() {
     setReservingDriverId(null);
     setRequestNotice('');
     setIsAddingDriver(true);
-    // The form sits below Available Rides; bring it into view once rendered.
-    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 150);
+    // The form replaces the board on the Home screen and opens scrolled to
+    // the top (HomeScreen remounts its ScrollView per view), so no extra
+    // scrolling is needed here.
   }
 
   // Closes the form and clears out anything the user typed.
@@ -963,11 +964,6 @@ export default function App() {
     return minimum;
   })();
 
-  const showActionsRow = currentUser
-    ? currentUser.role === 'driver'
-      ? !isAddingDriver
-      : !isAddingRider
-    : false;
   // A rider taps "Request This Ride" on Ride Details: they join the shared
   // waiting list automatically (using their own account) the first time they
   // request a ride, and the request-confirm panel opens.
@@ -981,6 +977,19 @@ export default function App() {
         : [...current, { id: currentUser.id, name: currentUser.name }]
     );
     handleStartReserve(driverId);
+  }
+
+  // A rider taps "Request Ride" on a Home ride card: opens that ride's
+  // details with the request-confirm panel already open. It's the same flow
+  // as opening the ride and tapping Request This Ride, just one tap shorter.
+  function handleQuickRequest(driverId) {
+    handleViewRideDetails(driverId);
+    handleBeginRequest(driverId);
+  }
+
+  // Tapping your avatar on Home opens the Profile tab.
+  function handleOpenProfile() {
+    setActiveTab('profile');
   }
 
   // Switches bottom tabs. Tapping Home while already on Home closes Ride
@@ -1089,14 +1098,14 @@ export default function App() {
               rideSortOrder={rideSortOrder}
               setRideSortOrder={setRideSortOrder}
               handleViewRideDetails={handleViewRideDetails}
+              handleQuickRequest={handleQuickRequest}
               handleLeaveWaitlist={handleLeaveWaitlist}
-              showActionsRow={showActionsRow}
               isAddingDriver={isAddingDriver}
               isAddingRider={isAddingRider}
               handleAddDriver={handleAddDriver}
               handleNeedRide={handleNeedRide}
               isCurrentUserWaiting={isCurrentUserWaiting}
-              handleSignOut={handleSignOut}
+              handleOpenProfile={handleOpenProfile}
               matchConfirmation={matchConfirmation}
               handleDismissMatchConfirmation={handleDismissMatchConfirmation}
               scrollViewRef={scrollViewRef}
