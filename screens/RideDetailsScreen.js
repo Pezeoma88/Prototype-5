@@ -15,11 +15,14 @@ import { colors, radius, spacing, typography } from '../theme/theme';
 // Ride Details: shown after selecting a ride from Available Rides. Shows
 // pending requests (with Accept/Deny for the ride's driver), confirmed
 // passengers, and the rider's Request / Leave actions. All logic lives in
-// App.js and arrives as props; the rules for who sees which action are the
-// same as Prototype 4.
+// App.js and arrives as props. Driver controls (Accept/Deny, Edit, Cancel)
+// need the ride's own driver in Driver mode; Request needs Rider mode. Your
+// own confirmed seat ("Leave") is yours in either mode.
 export default function RideDetailsScreen({
   detailsDriver,
   currentUser,
+  activeMode,
+  handleSwitchMode,
   requestNotice,
   isOwnerDriver,
   isOwnDetailsRide,
@@ -41,7 +44,7 @@ export default function RideDetailsScreen({
   function renderRiderAction() {
     // Requesting is hidden entirely on your own ride, so nobody can request
     // a seat from themselves.
-    if (currentUser.role !== 'rider' || isOwnDetailsRide) {
+    if (activeMode !== 'rider' || isOwnDetailsRide) {
       return null;
     }
 
@@ -108,7 +111,7 @@ export default function RideDetailsScreen({
       {/* Driver + trip summary */}
       <Card style={styles.block}>
         <View style={styles.driverRow}>
-          <Avatar name={detailsDriver.name} role="driver" size={56} ring />
+          <Avatar name={detailsDriver.name} role="driver" uri={detailsDriver.avatarUrl} size={56} ring />
           <View style={styles.driverText}>
             <Text style={styles.driverName} numberOfLines={2}>
               {detailsDriver.name}
@@ -148,6 +151,22 @@ export default function RideDetailsScreen({
       {/* The rider's own action comes first so Request is visible right away. */}
       {renderRiderAction()}
 
+      {/* Your own ride while in Rider mode: driver controls stay in Driver
+          mode, so offer a one-tap switch instead of showing them here. */}
+      {isOwnDetailsRide && activeMode === 'rider' && (
+        <FormSection title="This is your ride" icon="car-sport" tint={colors.driver} style={styles.block}>
+          <Text style={styles.panelText}>
+            You&apos;re in Rider mode. Switch to Driver to accept or deny requests, edit this ride,
+            or cancel it.
+          </Text>
+          <AppButton
+            title="Switch to Driver to Manage"
+            icon="swap-horizontal"
+            onPress={handleSwitchMode}
+          />
+        </FormSection>
+      )}
+
       {/* Pending requests */}
       <SectionHeader
         title="Pending requests"
@@ -161,7 +180,7 @@ export default function RideDetailsScreen({
           {detailsDriver.pendingRequests.map((request) => (
             <Card key={request.id} style={styles.personCard}>
               <View style={styles.personRow}>
-                <Avatar name={request.name} role="rider" size={38} />
+                <Avatar name={request.name} role="rider" uri={request.avatarUrl} size={38} />
                 <View style={styles.personText}>
                   <Text style={styles.personName} numberOfLines={1}>
                     {request.name}
@@ -216,11 +235,13 @@ export default function RideDetailsScreen({
       ) : (
         <View style={styles.block}>
           {detailsDriver.matchedRiders.map((rider) => {
-            const isSelf = currentUser.role === 'rider' && rider.id === currentUser.id;
+            // Your confirmed seat stays yours in either mode, so you can
+            // always Leave it.
+            const isSelf = rider.id === currentUser.id;
             return (
               <Card key={rider.id} style={styles.personCard}>
                 <View style={styles.personRow}>
-                  <Avatar name={rider.name} role="rider" size={38} />
+                  <Avatar name={rider.name} role="rider" uri={rider.avatarUrl} size={38} />
                   <View style={styles.personText}>
                     <Text style={styles.personName} numberOfLines={1}>
                       {rider.name}

@@ -17,7 +17,7 @@ export default function RiderCard({ rider, isSelf, onRemove }) {
     <Card style={styles.card}>
       <View style={styles.stripe} />
       <View style={styles.topRow}>
-        <Avatar name={rider.name} role="rider" size={44} />
+        <Avatar name={rider.name} role="rider" uri={rider.avatarUrl} size={44} />
         <View style={styles.nameCol}>
           <Text style={styles.name} numberOfLines={1}>
             {rider.name}

@@ -9,21 +9,26 @@ import { colors, spacing, typography } from '../theme/theme';
 
 // Full-width Available Ride card (a Driver's OFFER). `ride` is one entry of
 // App's `drivers` state. Shows who is driving, where they're going, when,
-// and seats, plus the action that fits the viewer:
-//   - the ride's own driver:   Manage Ride
-//   - a rider:                 Request Ride (or its current status)
-//   - anyone else:             View Details
+// and seats, plus the action that fits the viewer and their current mode
+// (App's activeMode):
+//   - your own ride, Driver mode:  Manage Ride
+//   - your own ride, Rider mode:   "Your ride" (switch to Driver to manage)
+//   - Rider mode:                  Request Ride (or its current status)
+//   - anyone else:                 View Details
 // Rides have no pickup location yet, so RouteLine shows destination only.
-export default function RideCard({ ride, currentUser, onView, onRequest }) {
+export default function RideCard({ ride, currentUser, activeMode, onView, onRequest }) {
   const isOwn = ride.driverAccountId === currentUser.id;
   const isFull = ride.seats === 0;
-  const isRider = currentUser.role === 'rider';
+  const isRider = activeMode === 'rider';
   const alreadyConfirmed = ride.matchedRiders.some((r) => r.id === currentUser.id);
   const alreadyPending = ride.pendingRequests.some((req) => req.riderId === currentUser.id);
 
   let primaryAction = null;
-  if (isOwn) {
+  if (isOwn && !isRider) {
     primaryAction = <AppButton title="Manage Ride" icon="settings-outline" size="sm" onPress={onView} style={styles.flex} />;
+  } else if (isOwn) {
+    // Driver controls stay in Driver mode; Details offers the switch.
+    primaryAction = <StatusPill icon="car-sport" label="Your ride" color={colors.driver} />;
   } else if (isRider) {
     if (alreadyConfirmed) {
       primaryAction = <StatusPill icon="checkmark-circle" label="Seat confirmed" color={colors.success} />;
@@ -46,7 +51,7 @@ export default function RideCard({ ride, currentUser, onView, onRequest }) {
   return (
     <Card onPress={onView} style={styles.card}>
       <View style={styles.topRow}>
-        <Avatar name={ride.name} role="driver" size={44} />
+        <Avatar name={ride.name} role="driver" uri={ride.avatarUrl} size={44} />
         <View style={styles.nameCol}>
           <Text style={styles.name} numberOfLines={1}>
             {ride.name}
@@ -54,7 +59,11 @@ export default function RideCard({ ride, currentUser, onView, onRequest }) {
           <View style={styles.subRow}>
             <Ionicons name="car-sport" size={13} color={colors.driver} />
             <Text style={styles.subText} numberOfLines={1}>
-              {isOwn ? 'Your ride' : 'Driver · offering seats'}
+              {isOwn && isRider
+                ? 'Your ride · switch to Driver to manage'
+                : isOwn
+                  ? 'Your ride'
+                  : 'Driver · offering seats'}
             </Text>
           </View>
         </View>

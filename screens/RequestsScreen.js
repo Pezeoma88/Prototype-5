@@ -7,9 +7,9 @@ import { gutter, spacing } from '../theme/theme';
 // arrives with request expiry and past rides. Until then, requests are
 // managed from each ride's details on the Home board, exactly as in
 // Prototype 4.
-export default function RequestsScreen({ currentUser, onGoHome }) {
+export default function RequestsScreen({ activeMode, onGoHome }) {
   const message =
-    currentUser.role === 'driver'
+    activeMode === 'driver'
       ? 'Soon you will see every request for your rides here. For now, open one of your rides on the Home board to accept or deny requests.'
       : 'Soon you will see all your ride requests here. For now, open a ride on the Home board to see your request status.';
   return (

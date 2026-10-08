@@ -24,9 +24,10 @@ const ROLE_OPTIONS = [
 ];
 
 // Sign-in screen: accounts are `profiles` rows in Supabase (no passwords).
-// Email is the account identifier; picking a name + role only applies the
-// first time an email is used. All state and the sign-in logic stay in
-// App.js; this screen only renders them.
+// Email is the account identifier and the name only applies the first time
+// an email is used. Driver/Rider is picked on every sign-in: it's the mode
+// for this session, not a permanent account type. All state and the sign-in
+// logic stay in App.js; this screen only renders them.
 export default function SignInScreen({
   authEmailInput,
   setAuthEmailInput,
@@ -70,60 +71,60 @@ export default function SignInScreen({
               />
 
               {matchingAuthAccount ? (
-                <Notice
-                  message={`Welcome back, ${matchingAuthAccount.name}! You’ll log back in as ${
-                    matchingAuthAccount.role === 'driver' ? 'a Driver' : 'a Rider'
-                  }.`}
-                />
+                <Notice message={`Welcome back, ${matchingAuthAccount.name}!`} />
               ) : (
-                <>
-                  <TextField
-                    label="Your name"
-                    icon="person-outline"
-                    placeholder="e.g. Jordan Smith"
-                    value={authNameInput}
-                    onChangeText={setAuthNameInput}
-                    returnKeyType="done"
-                    onSubmitEditing={Keyboard.dismiss}
-                  />
-
-                  <Text style={styles.label}>I am a…</Text>
-                  <View style={styles.roleRow}>
-                    {ROLE_OPTIONS.map((option) => {
-                      const isActive = authRole === option.key;
-                      const tint = roleColor(option.key);
-                      return (
-                        <Pressable
-                          key={option.key}
-                          onPress={() => setAuthRole(option.key)}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected: isActive }}
-                          style={({ pressed }) => [
-                            styles.roleTile,
-                            isActive && { borderColor: tint, backgroundColor: roleSoftColor(option.key) },
-                            pressed && styles.pressed,
-                          ]}
-                        >
-                          <View style={styles.roleTop}>
-                            <Ionicons name={option.icon} size={22} color={isActive ? tint : colors.textMuted} />
-                            <Ionicons
-                              name={isActive ? 'checkmark-circle' : 'ellipse-outline'}
-                              size={18}
-                              color={isActive ? tint : colors.textFaint}
-                            />
-                          </View>
-                          <Text style={styles.roleTitle}>{option.title}</Text>
-                          <Text style={styles.roleDescription}>{option.description}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </>
+                <TextField
+                  label="Your name"
+                  icon="person-outline"
+                  placeholder="e.g. Jordan Smith"
+                  value={authNameInput}
+                  onChangeText={setAuthNameInput}
+                  returnKeyType="done"
+                  onSubmitEditing={Keyboard.dismiss}
+                />
               )}
 
+              {/* Driver/Rider is how you're using CarpoolBoard right now, not
+                  a permanent account type, so it's offered to new AND
+                  returning users. */}
+              <Text style={styles.label}>
+                {matchingAuthAccount ? 'Continue as…' : 'Start as…'}
+              </Text>
+              <View style={styles.roleRow}>
+                {ROLE_OPTIONS.map((option) => {
+                  const isActive = authRole === option.key;
+                  const tint = roleColor(option.key);
+                  return (
+                    <Pressable
+                      key={option.key}
+                      onPress={() => setAuthRole(option.key)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isActive }}
+                      style={({ pressed }) => [
+                        styles.roleTile,
+                        isActive && { borderColor: tint, backgroundColor: roleSoftColor(option.key) },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View style={styles.roleTop}>
+                        <Ionicons name={option.icon} size={22} color={isActive ? tint : colors.textMuted} />
+                        <Ionicons
+                          name={isActive ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={18}
+                          color={isActive ? tint : colors.textFaint}
+                        />
+                      </View>
+                      <Text style={styles.roleTitle}>{option.title}</Text>
+                      <Text style={styles.roleDescription}>{option.description}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
               <Text style={styles.hint}>
-                New here? Enter your name and pick a role. Already signed up? Just enter the same
-                email — your name and role are saved with it.
+                New here? Enter your name and pick how you&apos;ll start. Already signed up? Just
+                enter the same email. One account works as both a Driver and a Rider, and you can
+                switch anytime from Profile.
               </Text>
 
               {authError !== '' && <Notice message={authError} tone="danger" />}
@@ -139,7 +140,7 @@ export default function SignInScreen({
             <View style={styles.disclaimer}>
               <Ionicons name="shield-outline" size={15} color={colors.textFaint} style={styles.disclaimerIcon} />
               <Text style={styles.disclaimerText}>
-                This is a class-project prototype login: your name, email, and role are saved to
+                This is a class-project prototype login: your name and email are saved to
                 CarpoolBoard&apos;s shared database, with no password and no real security. Anyone who
                 enters your email can sign in as you. Don&apos;t use a real/sensitive password anywhere
                 here.

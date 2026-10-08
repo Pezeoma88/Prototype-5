@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@react-native-vector-icons/ionicons';
 import Avatar from '../components/Avatar';
 import AppButton from '../components/AppButton';
@@ -8,20 +8,32 @@ import InfoRow from '../components/InfoRow';
 import { colors, gutter, radius, roleColor, spacing, typography } from '../theme/theme';
 
 // Profile tab, laid out for the full Prototype 5 profile (photo, bio,
-// vehicle, ratings, reviews). Only name, email, and role exist in Supabase
-// today, so everything else shows an honest placeholder: nothing here is
-// made up. Vehicle, license, and reviews are Driver-only; Riders get a
-// "Looking for a Ride" card instead.
-export default function ProfileScreen({ currentUser, handleSignOut }) {
-  const isDriver = currentUser.role === 'driver';
-  const tint = roleColor(currentUser.role);
+// vehicle, ratings, reviews). Photo, name, email, bio, and vehicle
+// make/model are real, saved in Supabase and changed from Edit Profile.
+// Ratings and reviews don't exist yet, so they show an honest placeholder:
+// nothing here is made up.
+//
+// One profile works in both modes. The Mode card switches between Driver
+// and Rider (App's activeMode) without signing out; the sections below
+// follow the current mode: Vehicle, license, and reviews in Driver mode, a
+// "Looking for a Ride" card in Rider mode. The vehicle stays saved either way.
+export default function ProfileScreen({
+  currentUser,
+  activeMode,
+  handleSwitchMode,
+  handleStartEditProfile,
+  handleSignOut,
+}) {
+  const isDriver = activeMode === 'driver';
+  const tint = roleColor(activeMode);
+  const otherModeLabel = isDriver ? 'Rider' : 'Driver';
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
       {/* Hero */}
       <View style={styles.hero}>
         <View style={[styles.glow, { backgroundColor: `${tint}1F` }]} />
-        <Avatar name={currentUser.name} role={currentUser.role} size={96} ring />
+        <Avatar name={currentUser.name} role={activeMode} uri={currentUser.avatarUrl} size={96} ring />
         <Text style={styles.name} numberOfLines={2}>
           {currentUser.name}
         </Text>
@@ -41,32 +53,62 @@ export default function ProfileScreen({ currentUser, handleSignOut }) {
           icon="create-outline"
           variant="secondary"
           size="sm"
-          disabled
+          onPress={handleStartEditProfile}
           style={styles.editButton}
         />
-        <Text style={styles.editHint}>Profile editing and photos are coming in the profile update.</Text>
+        <Text style={styles.editHint}>Change your photo, name, email, bio, and vehicle.</Text>
       </View>
+
+      {/* Mode: switch Driver ↔ Rider without signing out */}
+      <FormSection title="Mode" icon="swap-horizontal" tint={tint}>
+        <Text style={styles.modeText}>
+          You&apos;re using CarpoolBoard as a{' '}
+          <Text style={[styles.modeStrong, { color: tint }]}>{isDriver ? 'Driver' : 'Rider'}</Text>.
+          Your profile, rides, and requests stay the same in both modes.
+        </Text>
+        <AppButton
+          title={`Switch to ${otherModeLabel}`}
+          icon={isDriver ? 'walk' : 'car-sport'}
+          variant={isDriver ? 'rider' : 'primary'}
+          onPress={handleSwitchMode}
+        />
+      </FormSection>
 
       {/* About */}
       <FormSection title="About" icon="person-circle-outline" tint={tint}>
-        <PlaceholderText icon="add-circle-outline" text="Add a bio" detail="Tell riders and drivers a little about yourself." />
+        {currentUser.bio !== '' ? (
+          <Text style={styles.bio}>{currentUser.bio}</Text>
+        ) : (
+          <PlaceholderText
+            icon="add-circle-outline"
+            text="Add a bio"
+            detail="Tell riders and drivers a little about yourself."
+            onPress={handleStartEditProfile}
+          />
+        )}
       </FormSection>
 
       {isDriver ? (
         <>
-          {/* Vehicle (Driver only) */}
+          {/* Vehicle (shown in Driver mode; saved on the profile in both modes) */}
           <FormSection title="Vehicle" icon="car-sport-outline" tint={tint}>
-            <PlaceholderText
-              icon="car-outline"
-              text="Vehicle information coming in the profile update"
-              detail="Your car’s make and model will show on your ride cards."
-            />
+            {currentUser.vehicleMakeModel !== '' ? (
+              <InfoRow icon="car-outline" label="Make/model" value={currentUser.vehicleMakeModel} />
+            ) : (
+              <PlaceholderText
+                icon="add-circle-outline"
+                text="Add your vehicle"
+                detail="Your car’s make and model, so riders know what to look for."
+                onPress={handleStartEditProfile}
+              />
+            )}
             <View style={styles.privacyRow}>
               <Ionicons name="lock-closed-outline" size={16} color={colors.textMuted} />
               <View style={styles.privacyText}>
                 <Text style={styles.privacyTitle}>License plate</Text>
                 <Text style={styles.privacyDetail}>
-                  Only shown to riders with a confirmed seat on your ride.
+                  Not collected yet. Plates will only be shared with confirmed riders once
+                  CarpoolBoard has secure sign-in.
                 </Text>
               </View>
             </View>
@@ -98,7 +140,7 @@ export default function ProfileScreen({ currentUser, handleSignOut }) {
         <InfoRow icon="mail-outline" label="Email" value={currentUser.email} divider />
         <InfoRow
           icon={isDriver ? 'car-sport-outline' : 'walk-outline'}
-          label="Role"
+          label="Current mode"
           divider
           right={
             <View style={styles.rightAlign}>
@@ -118,10 +160,11 @@ export default function ProfileScreen({ currentUser, handleSignOut }) {
   );
 }
 
-// Muted "nothing here yet" line used inside profile cards.
-function PlaceholderText({ icon, text, detail }) {
-  return (
-    <View style={styles.placeholder}>
+// Muted "nothing here yet" line used inside profile cards. With `onPress`
+// it's tappable (e.g. "Add a bio" opens Edit Profile).
+function PlaceholderText({ icon, text, detail, onPress }) {
+  const body = (
+    <>
       <View style={styles.placeholderIcon}>
         <Ionicons name={icon} size={18} color={colors.textMuted} />
       </View>
@@ -129,7 +172,19 @@ function PlaceholderText({ icon, text, detail }) {
         <Text style={styles.placeholderText}>{text}</Text>
         {detail ? <Text style={styles.placeholderDetail}>{detail}</Text> : null}
       </View>
-    </View>
+    </>
+  );
+  if (!onPress) {
+    return <View style={styles.placeholder}>{body}</View>;
+  }
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.placeholder, pressed && styles.pressed]}
+    >
+      {body}
+    </Pressable>
   );
 }
 
@@ -185,6 +240,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
+  pressed: {
+    opacity: 0.7,
+  },
+  bio: {
+    ...typography.body,
+    color: colors.text,
+    lineHeight: 21,
+  },
   placeholderIcon: {
     width: 34,
     height: 34,
@@ -229,6 +292,15 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textFaint,
     marginTop: 2,
+  },
+  modeText: {
+    ...typography.body,
+    color: colors.textMuted,
+    lineHeight: 21,
+    marginBottom: spacing.lg,
+  },
+  modeStrong: {
+    fontWeight: '700',
   },
   rightAlign: {
     flex: 1,

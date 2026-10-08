@@ -1,10 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { Alert, Keyboard, Platform, StyleSheet, View } from 'react-native';
+import { Alert, Keyboard, Linking, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from './lib/supabase';
-import { EMAIL_PATTERN, MAX_SEATS, MIN_SEATS, getDefaultDeparture, normalizeEmail } from './lib/format';
-import { buildDriversFromRows, profileToAccount } from './lib/board';
+import {
+  BIO_MAX_LENGTH,
+  EMAIL_PATTERN,
+  MAX_SEATS,
+  MIN_SEATS,
+  NAME_MAX_LENGTH,
+  VEHICLE_MAX_LENGTH,
+  getDefaultDeparture,
+  normalizeEmail,
+} from './lib/format';
+import {
+  ACCOUNT_COLUMNS,
+  BOARD_PROFILE_COLUMNS,
+  buildDriversFromRows,
+  getBoardAvatarUrl,
+  profileToAccount,
+} from './lib/board';
+import { AvatarError, pickAvatarImage, uploadAvatar } from './lib/avatar';
 import { colors } from './theme/theme';
 import TabBar from './components/TabBar';
 import SignInScreen from './screens/SignInScreen';
@@ -15,6 +31,7 @@ import RiderWaitlistForm from './screens/RiderWaitlistForm';
 import MapScreen from './screens/MapScreen';
 import RequestsScreen from './screens/RequestsScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import EditProfileScreen from './screens/EditProfileScreen';
 
 // Phase 1A layout: constants/helpers live in lib/format.js and lib/board.js,
 // screens live in screens/, shared UI in components/, and design tokens in
@@ -50,13 +67,21 @@ export default function App() {
   // The last load error, if any. Already-loaded rides stay on screen.
   const [boardError, setBoardError] = useState('');
 
-  // The signed-in account: { id, name, email, role }, or null when signed
-  // out. id is the profile's stable Supabase UUID. This is a prototype, NOT
+  // The signed-in account (the PERSON): { id, name, email, legacyRole, bio,
+  // vehicleMakeModel, avatarPath }, or null when signed out. id is the profile's stable Supabase UUID and never
+  // changes, whichever mode the person is using. This is a prototype, NOT
   // secure production authentication — there's no password and no Supabase
   // Auth. The email is the account's identifier (case-insensitive): "signing
-  // up" creates a `profiles` row with a name + email + role, and "logging in"
-  // again with the same email restores that same profile and its role.
+  // up" creates a `profiles` row with a name + email + starting role, and
+  // "logging in" again with the same email restores that same profile.
   const [currentUser, setCurrentUser] = useState(null);
+
+  // How the signed-in person is using CarpoolBoard right now: 'driver' or
+  // 'rider' (null when signed out). Chosen on the sign-in screen and switched
+  // from Profile. It lives only in this app session and is never written to
+  // Supabase: profiles.role is kept as legacy data (the role picked at
+  // sign-up) and doesn't decide what the person can do.
+  const [activeMode, setActiveMode] = useState(null);
 
   // True while a Continue press is talking to Supabase.
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -65,12 +90,35 @@ export default function App() {
   // null), looked up in Supabase shortly after the user stops typing.
   const [matchingAuthAccount, setMatchingAuthAccount] = useState(null);
 
-  // The current text typed into the sign-in form, and the role toggle. Name
-  // and role are only used when the email doesn't match an existing account.
+  // The current text typed into the sign-in form, and the Driver/Rider
+  // toggle. The name is only used when the email doesn't match an existing
+  // account; the toggle always picks the mode to sign in with (and, for a
+  // new account, is also saved as its starting profiles.role).
   const [authNameInput, setAuthNameInput] = useState('');
   const [authEmailInput, setAuthEmailInput] = useState('');
   const [authRole, setAuthRole] = useState('driver');
   const [authError, setAuthError] = useState('');
+
+  // Edit Profile: whether the form is open on the Profile tab, the text in
+  // its inputs (pre-filled from currentUser when it opens), and the last
+  // validation/save error. Saving updates the SAME profiles row, so the
+  // profile id, its rides/requests, and activeMode never change.
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileNameInput, setProfileNameInput] = useState('');
+  const [profileEmailInput, setProfileEmailInput] = useState('');
+  const [profileBioInput, setProfileBioInput] = useState('');
+  const [profileVehicleInput, setProfileVehicleInput] = useState('');
+  const [profileFormError, setProfileFormError] = useState('');
+  // True while a Save press is talking to Supabase (blocks double-taps).
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  // A new profile photo picked in Edit Profile but not saved yet:
+  // { uri, mimeType } of the local cropped image, or null to keep the
+  // current photo. It's only uploaded when Save Changes is pressed.
+  const [profilePhotoDraft, setProfilePhotoDraft] = useState(null);
+  // True while the photo library is open (blocks opening it twice).
+  const [isPickingPhoto, setIsPickingPhoto] = useState(false);
+  // A problem with the picked photo (wrong format, too big), shown under it.
+  const [profilePhotoError, setProfilePhotoError] = useState('');
 
   // Spike: a short message about the last request action (or why one was blocked).
   const [requestNotice, setRequestNotice] = useState('');
@@ -124,21 +172,30 @@ export default function App() {
   // Guards against a fast double-tap firing the same Supabase change twice.
   const isBoardActionRunningRef = useRef(false);
 
-  // Looking for a Ride, rebuilt as { id, name }: everyone with a pending
-  // request in Supabase, plus anyone who joined on this device, minus anyone
-  // who already has a confirmed (accepted) seat.
+  // Looking for a Ride, rebuilt as { id, name, avatarUrl }: everyone with a
+  // pending request in Supabase, plus anyone who joined on this device, minus
+  // anyone who already has a confirmed (accepted) seat. The signed-in
+  // person's photo comes from currentUser, so a new photo shows right away.
   const confirmedRiderIds = new Set(
     activeRequestRows.filter((req) => req.status === 'accepted').map((req) => req.rider_id)
   );
+  const getRiderAvatarUrl = (riderId) =>
+    currentUser && currentUser.id === riderId
+      ? currentUser.avatarUrl
+      : getBoardAvatarUrl(profilesById, riderId);
   const riders = [];
   for (const req of activeRequestRows) {
     if (req.status === 'pending' && !riders.some((r) => r.id === req.rider_id)) {
-      riders.push({ id: req.rider_id, name: profilesById[req.rider_id]?.name || 'Unknown rider' });
+      riders.push({
+        id: req.rider_id,
+        name: profilesById[req.rider_id]?.name || 'Unknown rider',
+        avatarUrl: getRiderAvatarUrl(req.rider_id),
+      });
     }
   }
   for (const rider of localWaitingRiders) {
     if (!riders.some((r) => r.id === rider.id)) {
-      riders.push(rider);
+      riders.push({ ...rider, avatarUrl: getRiderAvatarUrl(rider.id) });
     }
   }
   for (let i = riders.length - 1; i >= 0; i -= 1) {
@@ -196,9 +253,11 @@ export default function App() {
       ];
       let profileMap = {};
       if (profileIds.length > 0) {
+        // Only what the board shows (name + photo): other people's emails
+        // aren't needed.
         const { data: profileRows, error: profilesError } = await supabase
           .from('profiles')
-          .select('id, name, email, role')
+          .select(BOARD_PROFILE_COLUMNS)
           .in('id', profileIds);
         if (profilesError) throw profilesError;
         profileMap = Object.fromEntries(profileRows.map((row) => [row.id, row]));
@@ -250,7 +309,7 @@ export default function App() {
   async function findProfileByEmail(email) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, name, email, role')
+      .select(ACCOUNT_COLUMNS)
       .eq('email', normalizeEmail(email))
       .limit(1);
     if (error) throw error;
@@ -259,7 +318,7 @@ export default function App() {
 
   // Live-matches the sign-in email field against existing profiles in
   // Supabase, so the form can show a "welcome back" notice and skip the
-  // name/role fields before the user even presses Continue. The lookup waits
+  // name field before the user even presses Continue. The lookup waits
   // until typing pauses, and ignores results for an email that's since changed.
   const trimmedAuthEmail = normalizeEmail(authEmailInput);
   useEffect(() => {
@@ -284,9 +343,10 @@ export default function App() {
   }, [trimmedAuthEmail, currentUser]);
 
   // Runs when the user presses "Continue" on the sign-in screen. An email
-  // that matches an existing profile logs back into it (keeping the name and
-  // role on file); a new email requires a name and role to create a new
-  // profile in Supabase. Email (not name) is the account identifier.
+  // that matches an existing profile logs back into that same profile; a new
+  // email requires a name to create a new profile in Supabase. Either way,
+  // the Driver/Rider choice becomes activeMode. Email (not name) is the
+  // account identifier, so one person has one profile in both modes.
   async function handleSignIn() {
     if (isSigningIn) {
       return;
@@ -317,7 +377,7 @@ export default function App() {
         const { data, error } = await supabase
           .from('profiles')
           .insert({ name: trimmedName, email: trimmedEmail, role: authRole })
-          .select('id, name, email, role')
+          .select(ACCOUNT_COLUMNS)
           .single();
         if (error) {
           // 23505 = unique violation: the email was registered in the
@@ -332,6 +392,7 @@ export default function App() {
       }
 
       setCurrentUser(account);
+      setActiveMode(authRole);
       setAuthNameInput('');
       setAuthEmailInput('');
       setAuthError('');
@@ -348,12 +409,228 @@ export default function App() {
   // untouched so the next person to sign in still sees the same board.
   function handleSignOut() {
     setCurrentUser(null);
+    setActiveMode(null);
+    resetProfileForm();
     resetForm();
     setIsAddingRider(false);
     setSelectedRideDriverId(null);
     setReservingDriverId(null);
     setRequestNotice('');
     setActiveTab('home');
+  }
+
+  // Switches the signed-in person between Driver and Rider mode without
+  // signing out. Only the session's activeMode changes: the profile, its id,
+  // and every ride/request stay exactly as they are in Supabase. Any
+  // half-finished mode-specific panel (Offer a Ride form, Need a Ride panel,
+  // request-confirm panel) is closed so the new mode starts clean. An open
+  // Ride Details screen stays open, so "Switch to Driver to manage" lands
+  // right on the ride's driver controls.
+  function handleSwitchMode() {
+    if (!currentUser) {
+      return;
+    }
+    Keyboard.dismiss();
+    resetForm();
+    setIsAddingRider(false);
+    setReservingDriverId(null);
+    setRequestReasonInput('');
+    setRequestNotice('');
+    setActiveMode((current) => (current === 'driver' ? 'rider' : 'driver'));
+  }
+
+  // Opens Edit Profile with the current saved values filled in.
+  function handleStartEditProfile() {
+    if (!currentUser) {
+      return;
+    }
+    setProfileNameInput(currentUser.name);
+    setProfileEmailInput(currentUser.email);
+    setProfileBioInput(currentUser.bio);
+    setProfileVehicleInput(currentUser.vehicleMakeModel);
+    setProfileFormError('');
+    setIsEditingProfile(true);
+  }
+
+  // Closes Edit Profile and throws away anything typed but not saved.
+  function resetProfileForm() {
+    setIsEditingProfile(false);
+    setProfileNameInput('');
+    setProfileEmailInput('');
+    setProfileBioInput('');
+    setProfileVehicleInput('');
+    setProfileFormError('');
+    setIsSavingProfile(false);
+    setProfilePhotoDraft(null);
+    setProfilePhotoError('');
+  }
+
+  // Edit Profile's photo button: asks for photo-library access, opens the
+  // library with a square crop, and keeps the picked photo as an unsaved
+  // preview. Cancelling the library leaves the current photo as it is.
+  async function handlePickProfilePhoto() {
+    if (isPickingPhoto || isSavingProfile) {
+      return;
+    }
+    Keyboard.dismiss();
+    setIsPickingPhoto(true);
+    setProfilePhotoError('');
+    try {
+      const result = await pickAvatarImage();
+      if (result.denied) {
+        Alert.alert(
+          'Photo access is off',
+          result.canAskAgain
+            ? 'CarpoolBoard needs access to your photos to choose a profile picture.'
+            : 'To choose a profile picture, allow photo access for this app in Settings.',
+          result.canAskAgain
+            ? [{ text: 'OK' }]
+            : [
+                { text: 'Not Now', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings() },
+              ]
+        );
+        return;
+      }
+      if (result.image) {
+        setProfilePhotoDraft(result.image);
+      }
+    } catch (error) {
+      if (error instanceof AvatarError) {
+        setProfilePhotoError(error.message);
+      } else {
+        console.warn('CarpoolBoard: picking a photo failed', error);
+        setProfilePhotoError("Couldn't open that photo. Please try another one.");
+      }
+    } finally {
+      setIsPickingPhoto(false);
+    }
+  }
+
+  // Throws away a picked-but-unsaved photo, going back to the current one.
+  function handleDiscardProfilePhoto() {
+    setProfilePhotoDraft(null);
+    setProfilePhotoError('');
+  }
+
+  // Saves Edit Profile by updating the signed-in person's existing profiles
+  // row (matched by id) — never by inserting a new one, so the profile id
+  // and every ride/request pointing at it stay the same. A changed email is
+  // normalized and checked for duplicates first; once saved, the new email
+  // is what signs this profile in, and the old one no longer matches it.
+  // A newly picked photo is uploaded to Storage and its path saved in
+  // avatar_path. activeMode is not touched. An empty bio/vehicle is saved
+  // as NULL.
+  async function handleSaveProfile() {
+    if (isSavingProfile || !currentUser) {
+      return;
+    }
+
+    const trimmedName = profileNameInput.trim();
+    const newEmail = normalizeEmail(profileEmailInput);
+    const trimmedBio = profileBioInput.trim();
+    const trimmedVehicle = profileVehicleInput.trim();
+
+    if (trimmedName === '') {
+      setProfileFormError('Please enter your name.');
+      return;
+    }
+    if (trimmedName.length > NAME_MAX_LENGTH) {
+      setProfileFormError(`Your name can be at most ${NAME_MAX_LENGTH} characters.`);
+      return;
+    }
+    if (newEmail === '') {
+      setProfileFormError('Please enter your email address.');
+      return;
+    }
+    if (!EMAIL_PATTERN.test(newEmail)) {
+      setProfileFormError('Please enter a valid email address.');
+      return;
+    }
+    if (trimmedBio.length > BIO_MAX_LENGTH) {
+      setProfileFormError(`Your bio can be at most ${BIO_MAX_LENGTH} characters.`);
+      return;
+    }
+    if (trimmedVehicle.length > VEHICLE_MAX_LENGTH) {
+      setProfileFormError(`Vehicle make/model can be at most ${VEHICLE_MAX_LENGTH} characters.`);
+      return;
+    }
+
+    const duplicateEmailMessage = 'That email is already used by another CarpoolBoard account.';
+
+    setIsSavingProfile(true);
+    setProfileFormError('');
+    try {
+      if (newEmail !== currentUser.email) {
+        const existing = await findProfileByEmail(newEmail);
+        if (existing && existing.id !== currentUser.id) {
+          setProfileFormError(duplicateEmailMessage);
+          return;
+        }
+      }
+
+      const updates = {
+        name: trimmedName,
+        email: newEmail,
+        bio: trimmedBio || null,
+        vehicle_make_model: trimmedVehicle || null,
+      };
+
+      // A newly picked photo is uploaded first. avatar_path is only changed
+      // once the upload has succeeded, so a failed upload never leaves the
+      // profile pointing at a missing file. With no new photo, avatar_path
+      // isn't sent at all and the current photo stays.
+      if (profilePhotoDraft) {
+        try {
+          updates.avatar_path = await uploadAvatar(currentUser.id, profilePhotoDraft);
+        } catch (uploadError) {
+          console.warn('CarpoolBoard: uploading profile photo failed', uploadError);
+          setProfileFormError(
+            uploadError instanceof AvatarError
+              ? uploadError.message
+              : "Couldn't upload your photo, so nothing was saved. Check your connection and try again."
+          );
+          return;
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', currentUser.id)
+        .select(ACCOUNT_COLUMNS);
+      if (error) {
+        // 23505 = unique violation: the email was taken in the meantime
+        // (e.g. from another phone). The unique constraint is the backstop.
+        if (error.code === '23505') {
+          setProfileFormError(duplicateEmailMessage);
+          return;
+        }
+        throw error;
+      }
+      if (!data || data.length === 0) {
+        throw new Error('No profile was updated.');
+      }
+
+      const updatedAccount = profileToAccount(data[0]);
+      setCurrentUser(updatedAccount);
+      // Waitlist entries added on this device keep their own copy of the name.
+      setLocalWaitingRiders((current) =>
+        current.map((rider) =>
+          rider.id === updatedAccount.id ? { ...rider, name: updatedAccount.name } : rider
+        )
+      );
+      Keyboard.dismiss();
+      resetProfileForm();
+      // Rides and requests show names and photos from profiles, so reload
+      // the board to show a changed name/photo everywhere.
+      loadBoard();
+    } catch (error) {
+      console.warn('CarpoolBoard: saving profile failed', error);
+      setProfileFormError("Couldn't save your profile. Check your connection and try again.");
+    } finally {
+      setIsSavingProfile(false);
+    }
   }
 
   // Opens the Offer a Ride form.
@@ -365,7 +642,12 @@ export default function App() {
   // driver's rides, so they can change its destination, departure, or seats.
   function handleStartEditRide(driverId) {
     const driver = drivers.find((d) => d.id === driverId);
-    if (!driver || !currentUser || driver.driverAccountId !== currentUser.id) {
+    if (
+      !driver ||
+      !currentUser ||
+      activeMode !== 'driver' ||
+      driver.driverAccountId !== currentUser.id
+    ) {
       return;
     }
     setEditingRideId(driver.id);
@@ -436,7 +718,7 @@ export default function App() {
   // is reloaded from Supabase.
   async function handleSaveDriver() {
     // Guards against a fast double-tap posting the same ride twice.
-    if (isSubmittingDriver || !currentUser) {
+    if (isSubmittingDriver || !currentUser || activeMode !== 'driver') {
       return;
     }
 
@@ -562,7 +844,12 @@ export default function App() {
   // can rescind it, and we confirm first since this can't be undone.
   function handleCancelRide(driverId) {
     const driver = drivers.find((d) => d.id === driverId);
-    if (!driver || !currentUser || driver.driverAccountId !== currentUser.id) {
+    if (
+      !driver ||
+      !currentUser ||
+      activeMode !== 'driver' ||
+      driver.driverAccountId !== currentUser.id
+    ) {
       return;
     }
 
@@ -619,7 +906,7 @@ export default function App() {
   async function handleRequestRide(driverId, riderId, reason) {
     const driver = drivers.find((d) => d.id === driverId);
     const rider = currentUser && currentUser.id === riderId ? currentUser : null;
-    if (!driver || !rider) {
+    if (!driver || !rider || activeMode !== 'rider') {
       return;
     }
 
@@ -705,7 +992,14 @@ export default function App() {
   async function handleAcceptRequest(driverId, requestId) {
     const driver = drivers.find((d) => d.id === driverId);
     const request = driver && driver.pendingRequests.find((req) => req.id === requestId);
-    if (!driver || !request) {
+    // Only the ride's own driver, in Driver mode, can answer its requests.
+    if (
+      !driver ||
+      !request ||
+      !currentUser ||
+      activeMode !== 'driver' ||
+      driver.driverAccountId !== currentUser.id
+    ) {
       return;
     }
 
@@ -754,7 +1048,14 @@ export default function App() {
   async function handleDenyRequest(driverId, requestId) {
     const driver = drivers.find((d) => d.id === driverId);
     const request = driver && driver.pendingRequests.find((req) => req.id === requestId);
-    if (!driver || !request) {
+    // Only the ride's own driver, in Driver mode, can answer its requests.
+    if (
+      !driver ||
+      !request ||
+      !currentUser ||
+      activeMode !== 'driver' ||
+      driver.driverAccountId !== currentUser.id
+    ) {
       return;
     }
 
@@ -900,15 +1201,17 @@ export default function App() {
   }
 
   const detailsDriver = drivers.find((driver) => driver.id === selectedRideDriverId) || null;
-  // Only the driver who posted a ride can manage it (accept/deny, cancel).
+  // Only the driver who posted a ride can manage it (accept/deny, edit,
+  // cancel), and only while they're in Driver mode. In Rider mode their own
+  // ride shows a "Switch to Driver to manage" shortcut instead.
   const isOwnerDriver =
     currentUser !== null &&
-    currentUser.role === 'driver' &&
+    activeMode === 'driver' &&
     detailsDriver !== null &&
     detailsDriver.driverAccountId === currentUser.id;
-  // True when the open ride belongs to the signed-in account, whatever its
-  // role. Used to hide any action that would let someone interact with
-  // their own listing (e.g. requesting a seat on their own ride).
+  // True when the open ride belongs to the signed-in account, whatever the
+  // current mode. Used to hide any action that would let someone interact
+  // with their own listing (e.g. requesting a seat on their own ride).
   const isOwnDetailsRide =
     currentUser !== null &&
     detailsDriver !== null &&
@@ -1030,6 +1333,8 @@ export default function App() {
       <RideDetailsScreen
         detailsDriver={detailsDriver}
         currentUser={currentUser}
+        activeMode={activeMode}
+        handleSwitchMode={handleSwitchMode}
         requestNotice={requestNotice}
         isOwnerDriver={isOwnerDriver}
         isOwnDetailsRide={isOwnDetailsRide}
@@ -1088,6 +1393,7 @@ export default function App() {
           {activeTab === 'home' ? (
             <HomeScreen
               currentUser={currentUser}
+              activeMode={activeMode}
               drivers={drivers}
               sortedDrivers={sortedDrivers}
               riders={riders}
@@ -1117,11 +1423,40 @@ export default function App() {
             <SafeAreaView style={appStyles.tabScreen} edges={['top']}>
               {activeTab === 'map' && <MapScreen onGoHome={handleGoHome} />}
               {activeTab === 'requests' && (
-                <RequestsScreen currentUser={currentUser} onGoHome={handleGoHome} />
+                <RequestsScreen activeMode={activeMode} onGoHome={handleGoHome} />
               )}
-              {activeTab === 'profile' && (
-                <ProfileScreen currentUser={currentUser} handleSignOut={handleSignOut} />
-              )}
+              {activeTab === 'profile' &&
+                (isEditingProfile ? (
+                  <EditProfileScreen
+                    activeMode={activeMode}
+                    currentPhotoUri={currentUser.avatarUrl}
+                    profilePhotoDraft={profilePhotoDraft}
+                    profilePhotoError={profilePhotoError}
+                    isPickingPhoto={isPickingPhoto}
+                    handlePickProfilePhoto={handlePickProfilePhoto}
+                    handleDiscardProfilePhoto={handleDiscardProfilePhoto}
+                    profileNameInput={profileNameInput}
+                    setProfileNameInput={setProfileNameInput}
+                    profileEmailInput={profileEmailInput}
+                    setProfileEmailInput={setProfileEmailInput}
+                    profileBioInput={profileBioInput}
+                    setProfileBioInput={setProfileBioInput}
+                    profileVehicleInput={profileVehicleInput}
+                    setProfileVehicleInput={setProfileVehicleInput}
+                    profileFormError={profileFormError}
+                    isSavingProfile={isSavingProfile}
+                    handleSaveProfile={handleSaveProfile}
+                    resetProfileForm={resetProfileForm}
+                  />
+                ) : (
+                  <ProfileScreen
+                    currentUser={currentUser}
+                    activeMode={activeMode}
+                    handleSwitchMode={handleSwitchMode}
+                    handleStartEditProfile={handleStartEditProfile}
+                    handleSignOut={handleSignOut}
+                  />
+                ))}
             </SafeAreaView>
           )}
         </View>

@@ -48,6 +48,7 @@ function getGreeting() {
 // screen and lifts forms the right amount above the keyboard.
 export default function HomeScreen({
   currentUser,
+  activeMode,
   drivers,
   sortedDrivers,
   riders,
@@ -78,7 +79,8 @@ export default function HomeScreen({
   const ridesSectionY = useRef(0);
   const ridersSectionY = useRef(0);
 
-  const isDriver = currentUser.role === 'driver';
+  // Driver/Rider UI follows the session's activeMode, not profiles.role.
+  const isDriver = activeMode === 'driver';
   const showRideForm = isDriver && isAddingDriver;
   const showRiderForm = !isDriver && isAddingRider;
 
@@ -113,7 +115,7 @@ export default function HomeScreen({
             accessibilityLabel="Open your profile"
             hitSlop={6}
           >
-            <Avatar name={currentUser.name} role={currentUser.role} size={46} ring />
+            <Avatar name={currentUser.name} role={activeMode} uri={currentUser.avatarUrl} size={46} ring />
           </Pressable>
         </View>
 
@@ -226,6 +228,7 @@ export default function HomeScreen({
                   key={driver.id}
                   ride={driver}
                   currentUser={currentUser}
+                  activeMode={activeMode}
                   onView={() => handleViewRideDetails(driver.id)}
                   onRequest={() => handleQuickRequest(driver.id)}
                 />
@@ -257,7 +260,9 @@ export default function HomeScreen({
               <RiderCard
                 key={rider.id}
                 rider={rider}
-                isSelf={currentUser.role === 'rider' && rider.id === currentUser.id}
+                // Your own waitlist entry stays yours in either mode, so you
+                // can always take yourself off the list.
+                isSelf={rider.id === currentUser.id}
                 onRemove={() => handleLeaveWaitlist(rider.id)}
               />
             ))
