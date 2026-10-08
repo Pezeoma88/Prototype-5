@@ -100,7 +100,4 @@ Testing focuses on:
 - Improve security and authentication.
 - Incorporate feedback from user testing.
 - Refine the user interface.
-
-## Repository
-
-https://github.com/Pezeoma88/Prototype-5
+- New Map integration.
